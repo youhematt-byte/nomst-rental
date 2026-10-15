@@ -1,4 +1,6 @@
 
+import { createHash } from 'node:crypto';
+
 const MAX_PDF = 4 * 1024 * 1024;
 const clean = (v, n = 200) => String(v ?? '').trim().slice(0, n);
 const esc = v => String(v).replace(/[&<>"']/g, c =>
@@ -25,11 +27,13 @@ export default async function handler(req, res) {
   const {
     RESEND_API_KEY,
     RESEND_FROM_EMAIL,
-    BOOKING_NOTIFICATION_EMAIL
+    BOOKING_NOTIFICATION_EMAIL,
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
   } = process.env;
 
   if (!RESEND_API_KEY || !RESEND_FROM_EMAIL ||
-      !BOOKING_NOTIFICATION_EMAIL) {
+      !BOOKING_NOTIFICATION_EMAIL || !SUPABASE_URL || !SUPABASE_SECRET_KEY) {
     return reply(res, 503, '網站寄信設定尚未完成');
   }
 
@@ -38,6 +42,10 @@ export default async function handler(req, res) {
     return reply(res, 400, '資料格式錯誤');
   }
 
+  const requestId = clean(b.requestId, 40);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+    return reply(res, 400, '預約識別碼不正確，請重新整理後再試');
+  }
   const name = clean(b.name, 80);
   const ig = clean(b.ig, 80);
   const phone = clean(b.phone, 40);
@@ -196,15 +204,56 @@ export default async function handler(req, res) {
     }
   ];
 
+  // 先登記唯一 requestId；失敗時不寄信，避免資料庫失效造成無紀錄寄送。
+  // 不自動重試：寄信服務可能已接受請求，即使網路回應失敗。
+  const requestHash = createHash('sha256').update(JSON.stringify({
+    name, ig, phone, email, purpose, start, end, delivery, station, store,
+    verify, lens:b.lens===true, grip:b.grip===true,
+    pdfHash:createHash('sha256').update(pdf).digest('hex')
+  })).digest('hex');
+  const baseUrl = SUPABASE_URL.replace(/\/$/, '');
+  const dbHeaders = {
+    apikey: SUPABASE_SECRET_KEY,
+    Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+    'Content-Type': 'application/json'
+  };
+  const dbUpdate = async (patch) => {
+    const r = await fetch(`${baseUrl}/rest/v1/rental_bookings?request_id=eq.${encodeURIComponent(requestId)}`, {
+      method:'PATCH', headers:{...dbHeaders,Prefer:'return=minimal'},
+      body:JSON.stringify({...patch,updated_at:new Date().toISOString()})
+    });
+    if (!r.ok) throw new Error(`資料庫更新失敗 ${r.status}`);
+  };
+  try {
+    const db = await fetch(`${baseUrl}/rest/v1/rental_bookings`, {
+      method:'POST', headers:{...dbHeaders,Prefer:'return=minimal'},
+      body:JSON.stringify({request_id:requestId,request_hash:requestHash,
+        customer_name:name,customer_email:email,rental_start:start,
+        rental_end:end,rental_days:days,rental_total:total})
+    });
+    if (db.status===409) return reply(res,409,'此筆申請已受理或正在處理，請勿重複送出；如需確認請聯絡店家');
+    if (!db.ok) {
+      console.error('Booking database insert failed',db.status);
+      return reply(res,503,'預約紀錄服務暫時無法使用，請稍後再試');
+    }
+  } catch(e) {
+    console.error('Booking database error',e?.message);
+    return reply(res,503,'預約紀錄服務暫時無法連線，請稍後再試');
+  }
+
   try {
     let sent = 0;
 
-    for (const msg of messages) {
+    for (const [index, msg] of messages.entries()) {
+      const prefix = index===0 ? 'shop' : 'customer';
+      // sending 是不確定狀態：不自動重試，以免重複寄出。
+      await dbUpdate({[`${prefix}_email_status`]:'sending'});
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `${requestId}-${index===0?'shop':'customer'}`
         },
         body: JSON.stringify(msg)
       });
@@ -216,6 +265,7 @@ export default async function handler(req, res) {
           await response.text().catch(() => '')
         );
 
+        await dbUpdate({[`${prefix}_email_status`]:'failed',last_error:`Resend HTTP ${response.status}`}).catch(()=>{});
         return reply(
           res,
           502,
@@ -225,6 +275,8 @@ export default async function handler(req, res) {
         );
       }
 
+      const result = await response.json().catch(()=>({}));
+      await dbUpdate({[`${prefix}_email_status`]:'sent', [`${prefix}_email_id`]:result.id||null});
       sent++;
     }
 
