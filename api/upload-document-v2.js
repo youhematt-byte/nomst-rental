@@ -110,6 +110,42 @@ export default async function handler(req, res) {
     }
 
     const authorized = await authResponse.json();
+    
+    if (authorized !== true) {
+      return res.status(403).json({
+        error: '上傳憑證已過期或次數已用完'
+      });
+    }
+
+    const sessionResponse = await fetch(
+      `${base}/rest/v1/document_upload_sessions` +
+      `?token_hash=eq.${tokenHash}` +
+      `&request_id=eq.${requestId}` +
+      `&select=id&limit=1`,
+      {
+        headers: {
+          apikey: SUPABASE_SECRET_KEY,
+          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`
+        }
+      }
+    );
+
+    if (!sessionResponse.ok) {
+      return res.status(502).json({
+        error: '無法查詢上傳工作階段'
+      });
+    }
+
+    const sessions = await sessionResponse.json();
+
+    if (sessions.length !== 1) {
+      return res.status(403).json({
+        error: '上傳工作階段不存在'
+      });
+    }
+
+    const uploadSessionId = sessions[0].id;
+
 
     if (authorized !== true) {
       return res.status(403).json({
@@ -155,6 +191,7 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           id,
           request_id: requestId,
+          upload_session_id: uploadSessionId,
           storage_path: path,
           file_sha256: hash,
           file_size: buffer.length,
