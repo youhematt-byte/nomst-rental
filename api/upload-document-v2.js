@@ -147,11 +147,7 @@ export default async function handler(req, res) {
     const uploadSessionId = sessions[0].id;
 
 
-    if (authorized !== true) {
-      return res.status(403).json({
-        error: '上傳憑證已過期或次數已用完'
-      });
-    }
+
 
     const headers = {
       apikey: SUPABASE_SECRET_KEY,
