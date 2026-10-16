@@ -35,6 +35,50 @@ export default async function handler(req, res) {
 
     const base = SUPABASE_URL.replace(/\/$/, '');
 
+    // 從 Vercel 提供的請求資訊取得來源 IP
+    const ip = req.headers['x-vercel-forwarded-for'];
+
+    if (typeof ip !== 'string' || !ip.trim()) {
+      return res.status(403).json({
+        error: '無法驗證請求來源'
+      });
+    }
+
+    // 避免在資料庫儲存原始 IP
+    const ipHash = createHash('sha256')
+      .update(ip.trim())
+      .digest('hex');
+
+    // 呼叫 Supabase 原子性限流函式
+    const limitResponse = await fetch(
+      `${base}/rest/v1/rpc/check_rental_draft_rate_limit`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_SECRET_KEY,
+          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          p_ip_hash: ipHash
+        })
+      }
+    );
+
+    if (!limitResponse.ok) {
+      return res.status(503).json({
+        error: '預約驗證服務暫時無法使用'
+      });
+    }
+
+    const allowed = await limitResponse.json();
+
+    if (allowed !== true) {
+      return res.status(429).json({
+        error: '操作過於頻繁，請 10 分鐘後再試'
+      });
+    }
+
     const response = await fetch(
       `${base}/rest/v1/rental_booking_drafts`,
       {
