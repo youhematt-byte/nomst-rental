@@ -19,6 +19,15 @@ export default async function handler(req, res) {
     });
   }
 
+  // 僅允許持有店家管理密鑰的請求建立上傳工作階段
+  const adminSecret = process.env.NOMST_UPLOAD_ADMIN_SECRET;
+
+  if (!adminSecret || req.headers['x-nomst-admin-secret'] !== adminSecret) {
+    return res.status(403).json({
+      error: '未取得證件上傳授權'
+    });
+  }
+
   const { SUPABASE_URL, SUPABASE_SECRET_KEY } = process.env;
 
   if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
