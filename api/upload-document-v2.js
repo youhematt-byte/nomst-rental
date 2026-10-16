@@ -31,7 +31,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { requestId, fileType, fileBase64 } = req.body || {};
+    const {   requestId,   fileType,   fileBase64,   uploadToken } = req.body || {};
 
     if (
       typeof requestId !== 'string' ||
@@ -73,6 +73,50 @@ export default async function handler(req, res) {
     }
 
     const base = SUPABASE_URL.replace(/\/$/, '');
+    
+    if (
+      typeof uploadToken !== 'string' ||
+      !/^[0-9a-f]{64}$/i.test(uploadToken)
+    ) {
+      return res.status(401).json({
+        error: '缺少有效的上傳憑證'
+      });
+    }
+
+    const tokenHash = createHash('sha256')
+      .update(uploadToken)
+      .digest('hex');
+
+    const authResponse = await fetch(
+      `${base}/rest/v1/rpc/consume_document_upload_session`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_SECRET_KEY,
+          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          p_token_hash: tokenHash,
+          p_request_id: requestId
+        })
+      }
+    );
+
+    if (!authResponse.ok) {
+      return res.status(502).json({
+        error: '上傳授權驗證失敗'
+      });
+    }
+
+    const authorized = await authResponse.json();
+
+    if (authorized !== true) {
+      return res.status(403).json({
+        error: '上傳憑證已過期或次數已用完'
+      });
+    }
+
     const headers = {
       apikey: SUPABASE_SECRET_KEY,
       Authorization: `Bearer ${SUPABASE_SECRET_KEY}`
