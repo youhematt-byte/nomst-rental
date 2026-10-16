@@ -43,6 +43,16 @@ export default async function handler(req, res) {
   }
 
   const requestId = clean(b.requestId, 40);
+  
+const uploadToken =
+  typeof b.uploadToken === 'string'
+    ? b.uploadToken.trim()
+    : '';
+
+if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
+  return reply(res, 400, '上傳憑證格式錯誤');
+}
+
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
     return reply(res, 400, '預約識別碼不正確，請重新整理後再試');
   }
