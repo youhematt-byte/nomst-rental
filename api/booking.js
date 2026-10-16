@@ -251,6 +251,46 @@ if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
     return reply(res,503,'預約紀錄服務暫時無法連線，請稍後再試');
   }
 
+  // 證件綁定：失敗時記錄錯誤，不中斷原本的 Email 通知
+  if (uploadToken) {
+    try {
+      const tokenHash = createHash('sha256')
+        .update(uploadToken)
+        .digest('hex');
+
+      const linkResponse = await fetch(
+        `${baseUrl}/rest/v1/rpc/link_rental_documents_by_session`,
+        {
+          method: 'POST',
+          headers: dbHeaders,
+          body: JSON.stringify({
+            p_request_id: requestId,
+            p_token_hash: tokenHash
+          })
+        }
+      );
+
+      if (!linkResponse.ok) {
+        throw new Error(`Document link HTTP ${linkResponse.status}`);
+      }
+
+      const linkedCount = await linkResponse.json();
+
+      if (linkedCount !== 2) {
+        throw new Error(`Document count ${linkedCount}`);
+      }
+
+      console.log('Documents linked successfully');
+
+    } catch (error) {
+      console.error('Document linking failed', error.message);
+
+      await dbUpdate({
+        last_error: 'Document linking requires manual review'
+      }).catch(() => {});
+    }
+  }
+
   try {
     let sent = 0;
 
