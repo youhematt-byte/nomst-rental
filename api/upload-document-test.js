@@ -10,34 +10,38 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({
       ok: false,
-      error: '僅接受 POST'
+      code: 'METHOD_NOT_ALLOWED'
     });
   }
 
-  // 此測試端點始終禁止實際上傳
-  // 即使正式上傳開關被誤設為 true
+  // 獨立測試開關，不使用正式上傳開關
   if (
-    process.env.NOMST_ENABLE_DOCUMENT_UPLOAD
-      !== 'true'
+    process.env.NOMST_ENABLE_AUTH_TEST !== 'true'
   ) {
     return res.status(503).json({
       ok: false,
-      code: 'DOCUMENT_UPLOAD_DISABLED',
-      error: '證件上傳測試功能尚未開放'
+      code: 'AUTH_TEST_DISABLED'
     });
   }
 
-  const { SUPABASE_URL, SUPABASE_SECRET_KEY } =
-    process.env;
+  // 禁止檔案資料進入此測試 API
+  const body = req.body;
 
-  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
-    return res.status(503).json({
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body) ||
+    Object.keys(body).some(key =>
+      !['requestId', 'uploadToken'].includes(key)
+    )
+  ) {
+    return res.status(400).json({
       ok: false,
-      error: '服務設定不完整'
+      code: 'INVALID_TEST_REQUEST'
     });
   }
 
-  const { requestId, uploadToken } = req.body || {};
+  const { requestId, uploadToken } = body;
 
   if (
     typeof requestId !== 'string' ||
@@ -45,7 +49,7 @@ export default async function handler(req, res) {
   ) {
     return res.status(400).json({
       ok: false,
-      error: '預約編號格式錯誤'
+      code: 'INVALID_REQUEST_ID'
     });
   }
 
@@ -55,14 +59,15 @@ export default async function handler(req, res) {
   ) {
     return res.status(401).json({
       ok: false,
-      error: '上傳授權憑證格式錯誤'
+      code: 'INVALID_TOKEN_FORMAT'
     });
   }
 
-  // 目前不呼叫資料庫，也不接收證件
-  return res.status(503).json({
-    ok: false,
-    code: 'UPLOAD_NOT_IMPLEMENTED',
-    error: '尚未啟用實際證件上傳'
+  // 僅驗證格式，不查詢憑證是否有效
+  // 不預留次數、不寫入資料庫或 Storage
+  return res.status(200).json({
+    ok: true,
+    code: 'FORMAT_VALID_ONLY',
+    message: '格式正確，尚未驗證授權'
   });
 }
