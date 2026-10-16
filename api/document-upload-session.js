@@ -1,98 +1,103 @@
 
-import { randomBytes, createHash, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
 
-const hashToken = token =>
-  createHash('sha256').update(token).digest('hex');
+const hashToken = value =>
+  createHash('sha256').update(value).digest('hex');
+
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
-    return res.status(405).json({ error: '僅接受 POST' });
+    return res.status(405).json({
+      error: '僅接受 POST'
+    });
   }
 
-  // 授權流程尚未整合完成，預設保持關閉
+  // 正式啟用前保持關閉
   if (process.env.NOMST_ENABLE_DOCUMENT_UPLOAD !== 'true') {
     return res.status(503).json({
       error: '證件上傳功能尚未開放'
     });
   }
 
-  // 僅允許持有店家管理密鑰的請求建立上傳工作階段
-  const adminSecret = process.env.NOMST_UPLOAD_ADMIN_SECRET;
+  const {
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
+  } = process.env;
 
-  if (!adminSecret || req.headers['x-nomst-admin-secret'] !== adminSecret) {
-    return res.status(403).json({
-      error: '未取得證件上傳授權'
+  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+    return res.status(503).json({
+      error: '服務設定不完整'
     });
   }
 
-  const { SUPABASE_URL, SUPABASE_SECRET_KEY } = process.env;
+  const requestId = req.body?.requestId;
+  const authorizationToken = req.body?.authorizationToken;
 
-  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
-    return res.status(503).json({ error: '服務設定不完整' });
+  if (typeof requestId !== 'string' ||
+      !UUID_V4.test(requestId)) {
+    return res.status(400).json({
+      error: '預約編號格式錯誤'
+    });
   }
 
+  if (typeof authorizationToken !== 'string' ||
+      !/^[0-9a-f]{64}$/i.test(authorizationToken)) {
+    return res.status(403).json({
+      error: '預約草稿授權憑證無效'
+    });
+  }
+
+  const base = SUPABASE_URL.replace(/\/$/, '');
+  const headers = {
+    apikey: SUPABASE_SECRET_KEY,
+    Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+    'Content-Type': 'application/json'
+  };
+
   try {
-    const requestId = req.body?.requestId;
+    const authorizationHash = hashToken(authorizationToken);
 
-    if (
-      typeof requestId !== 'string' ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)
-    ) {
-      return res.status(400).json({
-        error: '預約編號格式錯誤'
-      });
-    }
-
-    const token = randomBytes(32).toString('hex');
-    const sessionId = randomUUID();
-    const expiresAt = new Date(
-      Date.now() + 15 * 60 * 1000
-    ).toISOString();
-
-    const base = SUPABASE_URL.replace(/\/$/, '');
-
+    // 原子性核發必須由資料庫函式完成：
+    // 同時驗證草稿、消耗授權並建立工作階段。
+    // 在該函式完成前，禁止核發憑證。
     const response = await fetch(
-      `${base}/rest/v1/document_upload_sessions`,
+      `${base}/rest/v1/rpc/issue_document_upload_session`,
       {
         method: 'POST',
-        headers: {
-          apikey: SUPABASE_SECRET_KEY,
-          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal'
-        },
+        headers,
         body: JSON.stringify({
-          id: sessionId,
-          request_id: requestId,
-          token_hash: hashToken(token),
-          max_uploads: 2,
-          upload_count: 0,
-          expires_at: expiresAt
+          p_request_id: requestId,
+          p_authorization_hash: authorizationHash,
+          p_session_id: randomUUID(),
+          p_token_hash: hashToken(
+            authorizationToken + ':session'
+          )
         })
       }
     );
 
     if (!response.ok) {
-      console.error('Upload session creation failed', response.status);
-      return res.status(502).json({
-        error: '無法建立上傳工作階段'
+      console.error('Session issuance failed', response.status);
+      return res.status(503).json({
+        error: '上傳授權服務尚未準備完成'
       });
     }
 
-    return res.status(200).json({
-      ok: true,
-      requestId,
-      uploadToken: token,
-      expiresAt
+    // 目前不回傳上傳憑證：
+    // 等資料庫函式完成並驗證回傳契約後再開放。
+    return res.status(503).json({
+      error: '上傳授權流程尚未正式開放'
     });
 
   } catch (error) {
     console.error('Upload session error', error?.message);
     return res.status(500).json({
-      error: '暫時無法建立上傳工作階段'
+      error: '上傳授權服務暫時無法使用'
     });
   }
 }
