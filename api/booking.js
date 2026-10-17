@@ -108,6 +108,19 @@ if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
     return reply(res, 400, '請填寫面交站點或寄送資料');
   }
 
+  // Shipping + ID verification must never silently skip document linkage.
+  if (delivery === 'ship' && verify === 'id' &&
+      (process.env.NOMST_ENABLE_DOCUMENT_UPLOAD !== 'true' ||
+       process.env.NOMST_UPLOAD_INTEGRATION_APPROVED !== 'true')) {
+    return reply(res, 503, '雙證件安全上傳尚未開放，請改選電話核實或不提供證件');
+  }
+  if (delivery === 'ship' && verify === 'id' && !uploadToken) {
+    return reply(res, 400, '請先完成兩份證件安全上傳');
+  }
+  if ((delivery !== 'ship' || verify !== 'id') && uploadToken) {
+    return reply(res, 400, '此核實方式不接受證件上傳憑證');
+  }
+
   const encoded = b.contractBase64;
 
   if (
@@ -251,43 +264,21 @@ if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
     return reply(res,503,'預約紀錄服務暫時無法連線，請稍後再試');
   }
 
-  // 證件綁定：失敗時記錄錯誤，不中斷原本的 Email 通知
+  // Fail closed: never accept a booking as fully submitted when the document link fails.
   if (uploadToken) {
     try {
-      const tokenHash = createHash('sha256')
-        .update(uploadToken)
-        .digest('hex');
-
-      const linkResponse = await fetch(
-        `${baseUrl}/rest/v1/rpc/link_rental_documents_by_session`,
-        {
-          method: 'POST',
-          headers: dbHeaders,
-          body: JSON.stringify({
-            p_request_id: requestId,
-            p_token_hash: tokenHash
-          })
-        }
-      );
-
-      if (!linkResponse.ok) {
-        throw new Error(`Document link HTTP ${linkResponse.status}`);
+      const linkResponse = await fetch(`${baseUrl}/rest/v1/rpc/link_rental_documents_by_session`, {
+        method:'POST', headers:dbHeaders,
+        body:JSON.stringify({p_request_id:requestId,p_token_hash:createHash('sha256').update(uploadToken).digest('hex')})
+      });
+      if (!linkResponse.ok || await linkResponse.json() !== 2) {
+        await dbUpdate({last_error:'Document linking requires manual review'}).catch(()=>{});
+        return reply(res,409,'證件尚未完成核對，請聯絡店家，勿重新提交');
       }
-
-      const linkedCount = await linkResponse.json();
-
-      if (linkedCount !== 2) {
-        throw new Error(`Document count ${linkedCount}`);
-      }
-
-      console.log('Documents linked successfully');
-
-    } catch (error) {
-      console.error('Document linking failed', error.message);
-
-      await dbUpdate({
-        last_error: 'Document linking requires manual review'
-      }).catch(() => {});
+    } catch(error) {
+      console.error('Document linking failed',error?.message);
+      await dbUpdate({last_error:'Document linking requires manual review'}).catch(()=>{});
+      return reply(res,503,'證件綁定未完成，請聯絡店家核對');
     }
   }
 
