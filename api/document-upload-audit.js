@@ -8,10 +8,18 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
+  if (process.env.VERCEL_ENV !== 'preview') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Not found'
+    });
+  }
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({
-      error: '僅接受 POST'
+      ok: false,
+      error: 'Method not allowed'
     });
   }
 
@@ -27,7 +35,8 @@ export default async function handler(req, res) {
     !NOMST_UPLOAD_ADMIN_SECRET
   ) {
     return res.status(503).json({
-      error: '管理服務尚未完成設定'
+      ok: false,
+      database: 'not_configured'
     });
   }
 
@@ -35,7 +44,8 @@ export default async function handler(req, res) {
 
   if (typeof supplied !== 'string') {
     return res.status(403).json({
-      error: '未授權'
+      ok: false,
+      error: 'Unauthorized'
     });
   }
 
@@ -44,45 +54,48 @@ export default async function handler(req, res) {
 
   if (!timingSafeEqual(a, b)) {
     return res.status(403).json({
-      error: '未授權'
+      ok: false,
+      error: 'Unauthorized'
     });
   }
 
   try {
-    const base = SUPABASE_URL.replace(/\/$/, '');
+    const parsed = new URL(SUPABASE_URL);
 
-    const response = await fetch(
-      `${base}/rest/v1/document_upload_storage_audit` +
-      '?select=attempt_id,status,storage_check,' +
-      'reconciliation_required,created_at' +
-      '&limit=100',
-      {
-        headers: {
-          apikey: SUPABASE_SECRET_KEY,
-          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`
-        }
-      }
-    );
-
-    if (!response.ok) {
-      console.error('Audit query failed', response.status);
-      return res.status(502).json({
-        error: '無法查詢上傳異常紀錄'
+    if (
+      parsed.protocol !== 'https:' ||
+      !/^[a-z0-9-]+\.supabase\.co$/.test(parsed.hostname)
+    ) {
+      return res.status(503).json({
+        ok: false,
+        database: 'invalid_configuration'
       });
     }
 
-    const records = await response.json();
+    const response = await fetch(
+      `${parsed.origin}/rest/v1/rental_bookings?select=id&limit=0`,
+      {
+        headers: {
+          apikey: SUPABASE_SECRET_KEY,
+          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+          Accept: 'application/json'
+        },
+        signal: AbortSignal.timeout(5000)
+      }
+    );
 
-    return res.status(200).json({
-      ok: true,
-      count: records.length,
-      records
+    return res.status(response.ok ? 200 : 503).json({
+      ok: response.ok,
+      database: response.ok
+        ? 'connected'
+        : 'connection_failed',
+      environment: 'preview'
     });
 
-  } catch (error) {
-    console.error('Audit service error', error?.message);
-    return res.status(500).json({
-      error: '核對服務暫時無法使用'
+  } catch {
+    return res.status(503).json({
+      ok: false,
+      database: 'connection_failed'
     });
   }
 }
