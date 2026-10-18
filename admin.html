@@ -1,27 +1,355 @@
-<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>NOM.ST_ 管理後台（待驗收）</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:660px;margin:30px auto;padding:18px;background:#f5f7f6;color:#163027}section{background:white;border-radius:14px;padding:20px;margin:16px 0}input,button,select{font:inherit;padding:10px;max-width:100%;box-sizing:border-box}input{display:block;width:100%;margin:10px 0}button{background:#174c36;color:white;border:0;border-radius:7px;cursor:pointer;margin:6px 4px 6px 0}button:disabled{opacity:.5}label{display:block;margin-top:12px}#output{white-space:pre-wrap;overflow-wrap:anywhere}small{color:#576b61}</style></head><body><h1>NOM.ST_ 管理後台</h1><p>僅供測試環境；需要 Supabase Auth 個別管理員帳號。請勿使用真實證件測試。</p><section><h2>登入</h2><label>Staging Project URL<input id="url" placeholder="https://project-ref.supabase.co" autocomplete="off"></label><label>Staging Publishable／Anon Key<input id="anon" type="password" autocomplete="off"></label><label>電子郵件<input id="email" type="email" autocomplete="username"></label><label>密碼<input id="password" type="password" autocomplete="current-password"></label><button id="login">登入</button><button id="logout">登出</button><small>不儲存密碼或 Token。關閉頁面即結束工作階段。請勿在此填入 Supabase Secret／service_role Key。</small></section><section><h2>結案操作</h2><label>預約 request_id<input id="requestId" placeholder="UUID"></label><label>操作<select id="action"><option value="mark_returned">標記歸還</option><option value="mark_charges_settled">確認費用結清</option><option value="mark_contract_ended">確認合約終止</option><option value="confirm_no_dispute">確認無爭議</option><option value="open_dispute">開啟爭議</option><option value="resolve_dispute">解除爭議</option><option value="close">確認結案</option><option value="hold">保留證件</option><option value="release_hold">解除保留</option></select></label><button id="update">執行操作</button><small>後端必須驗證管理者身分與真實租約，並在資料庫交易中記錄操作。</small></section><section><h2>檢視已綁定證件</h2><label>證件 document_id<input id="documentId" placeholder="UUID"></label><button id="view">取得 60 秒檢視連結</button><p><small>連結具有短期存取權限，請勿複製轉傳。</small></p></section><section><h2>結果</h2><div id="output" role="status" aria-live="polite">尚未登入</div></section><script>
-let accessToken='';
-const $=id=>document.getElementById(id);
-const say=t=>$('output').textContent=t;
-$('login').onclick=async()=>{
-  const url=$('url').value.trim().replace(/\/$/,'');
-  if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url)){say('Staging URL 格式錯誤');return;}
-  if(!$('anon').value||!$('email').value||!$('password').value){say('請填寫登入資訊');return;}
-  try{
-    const r=await fetch(url+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:$('anon').value,'Content-Type':'application/json'},body:JSON.stringify({email:$('email').value,password:$('password').value})});
-    const d=await r.json();
-    $('password').value='';
-    if(!r.ok||!d.access_token){say('登入失敗，請檢查帳號及設定');return;}
-    accessToken=d.access_token;say('已登入；後端仍會檢查管理員名單與權限。');
-  }catch{say('登入連線失敗');}
-};
-$('logout').onclick=()=>{accessToken='';$('password').value='';say('已登出');};
-async function call(path,body){
-  if(!accessToken){say('請先登入');return;}
-  try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},body:JSON.stringify(body)});const d=await r.json();if(!r.ok){say('操作未完成：'+(d.code||'HTTP '+r.status));return;}
-    if(path.includes('admin-document-view')&&d.url){const u=new URL(d.url);if(u.protocol!=='https:'||u.hostname!==new URL($('url').value).hostname){say('拒絕開啟不符合來源的連結');return;}say('已核發短期連結，將在新分頁開啟');window.open(u.href,'_blank','noopener,noreferrer');}
-    else say(d.code||'已收到成功回應');
-  }catch{say('網路錯誤，操作狀態未確認，請勿重複送出');}
+
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>NOM.ST_ 管理後台</title>
+<style>
+*{box-sizing:border-box}
+body{
+  font-family:system-ui,-apple-system,sans-serif;
+  background:#f5f7f6;
+  color:#163027;
+  max-width:700px;
+  margin:30px auto;
+  padding:18px
 }
-$('update').onclick=()=>call('/api/admin-rental-closure',{requestId:$('requestId').value,action:$('action').value});
-$('view').onclick=()=>call('/api/admin-document-view',{requestId:$('requestId').value,documentId:$('documentId').value});
-</script></body></html>
+section{
+  background:white;
+  border-radius:14px;
+  padding:22px;
+  margin:16px 0
+}
+h1{margin-bottom:8px}
+input,select{
+  display:block;
+  width:100%;
+  padding:12px;
+  margin:10px 0;
+  border:1px solid #ccd7d0;
+  border-radius:8px;
+  font:inherit
+}
+button{
+  background:#174c36;
+  color:white;
+  border:0;
+  border-radius:8px;
+  padding:12px 18px;
+  cursor:pointer;
+  margin:6px 5px 6px 0;
+  font:inherit
+}
+button:disabled{opacity:.5;cursor:not-allowed}
+label{display:block;margin-top:12px}
+small{color:#576b61}
+#output{white-space:pre-wrap;overflow-wrap:anywhere}
+.hidden{display:none}
+</style>
+</head>
+<body>
+
+<h1>NOM.ST_ 管理後台</h1>
+<p>Staging 測試環境｜僅限授權管理員</p>
+
+<section>
+<h2>管理員登入</h2>
+<label>電子郵件
+<input id="email" type="email" autocomplete="username">
+</label>
+<label>密碼
+<input id="password" type="password"
+ autocomplete="current-password">
+</label>
+<button id="login">登入</button>
+<button id="logout" disabled>登出</button>
+<p><small>透過 Supabase Auth 驗證。
+請勿使用真實客戶證件測試。</small></p>
+</section>
+
+<div id="adminPanel" class="hidden">
+
+<section>
+<h2>租借結案管理</h2>
+<label>預約 request_id
+<input id="requestId" placeholder="預約 UUID">
+</label>
+<label>管理操作
+<select id="action">
+<option value="mark_returned">標記手機已歸還</option>
+<option value="mark_charges_settled">確認費用結清</option>
+<option value="mark_contract_ended">確認合約終止</option>
+<option value="confirm_no_dispute">確認無爭議</option>
+<option value="open_dispute">開啟爭議</option>
+<option value="resolve_dispute">解除爭議</option>
+<option value="close">確認結案</option>
+<option value="hold">保留證件</option>
+<option value="release_hold">解除保留</option>
+</select>
+</label>
+<button id="update">執行結案操作</button>
+<p><small>所有操作仍須通過資料庫管理員授權與稽核。</small></p>
+</section>
+
+<section>
+<h2>證件管理</h2>
+<label>證件 document_id
+<input id="documentId" placeholder="證件 UUID">
+</label>
+<button id="view">取得 60 秒檢視連結</button>
+<p><small>僅供已授權管理員查看已綁定證件，
+請勿轉傳短效連結。</small></p>
+</section>
+
+</div>
+
+<section>
+<h2>系統狀態</h2>
+<div id="output" role="status" aria-live="polite">
+尚未登入
+</div>
+</section>
+
+<script>
+let accessToken = '';
+let tokenExpiresAt = 0;
+let config = null;
+
+const $ = id => document.getElementById(id);
+const say = message => {
+  $('output').textContent = message;
+};
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function clearSession() {
+  accessToken = '';
+  tokenExpiresAt = 0;
+  $('password').value = '';
+  $('adminPanel').classList.add('hidden');
+  $('logout').disabled = true;
+}
+
+async function loadConfig() {
+  const response = await fetch(
+    '/api/document-upload-audit',
+    { method: 'GET', cache: 'no-store' }
+  );
+
+  if (!response.ok) {
+    throw new Error('無法取得 Preview 設定');
+  }
+
+  const data = await response.json();
+
+  if (
+    data.environment !== 'preview' ||
+    typeof data.url !== 'string' ||
+    !/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(data.url) ||
+    typeof data.publishableKey !== 'string' ||
+    !data.publishableKey.startsWith('sb_publishable_')
+  ) {
+    throw new Error('Staging 設定不正確');
+  }
+
+  config = data;
+  return data;
+}
+
+$('login').onclick = async () => {
+  if (!$('email').value || !$('password').value) {
+    say('請輸入電子郵件和密碼');
+    return;
+  }
+
+  $('login').disabled = true;
+  clearSession();
+
+  try {
+    say('正在驗證管理員...');
+
+    const settings = await loadConfig();
+
+    const response = await fetch(
+      settings.url + '/auth/v1/token?grant_type=password',
+      {
+        method: 'POST',
+        headers: {
+          apikey: settings.publishableKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email: $('email').value.trim(),
+          password: $('password').value
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.access_token) {
+      throw new Error('帳號或密碼錯誤');
+    }
+
+    const userResponse = await fetch(
+      settings.url + '/auth/v1/user',
+      {
+        headers: {
+          apikey: settings.publishableKey,
+          Authorization: 'Bearer ' + data.access_token
+        }
+      }
+    );
+
+    if (!userResponse.ok) {
+      throw new Error('無法確認登入身分');
+    }
+
+    const user = await userResponse.json();
+
+    if (!user.id || !user.email_confirmed_at) {
+      throw new Error('帳號尚未完成驗證');
+    }
+
+    const permissionResponse = await fetch(
+      settings.url +
+      '/rest/v1/nomst_admin_members?select=user_id&user_id=eq.' +
+      encodeURIComponent(user.id) + '&enabled=eq.true',
+      {
+        headers: {
+          apikey: settings.publishableKey,
+          Authorization: 'Bearer ' + data.access_token
+        }
+      }
+    );
+
+    if (!permissionResponse.ok) {
+      throw new Error('無法驗證管理員權限');
+    }
+
+    const permissions = await permissionResponse.json();
+
+    if (!Array.isArray(permissions) ||
+        permissions.length !== 1) {
+      throw new Error('此帳號尚未取得管理員權限');
+    }
+
+    accessToken = data.access_token;
+    tokenExpiresAt =
+      Date.now() + Math.max(0, Number(data.expires_in) || 0) * 1000;
+
+    $('adminPanel').classList.remove('hidden');
+    $('logout').disabled = false;
+
+    say('管理員登入成功（Staging）');
+
+  } catch (error) {
+    clearSession();
+    say(error.message || '登入失敗');
+  } finally {
+    $('login').disabled = false;
+    $('password').value = '';
+  }
+};
+
+$('logout').onclick = async () => {
+  const token = accessToken;
+  clearSession();
+
+  if (token && config) {
+    try {
+      await fetch(config.url + '/auth/v1/logout', {
+        method: 'POST',
+        headers: {
+          apikey: config.publishableKey,
+          Authorization: 'Bearer ' + token
+        }
+      });
+    } catch {}
+  }
+
+  say('已登出');
+};
+
+async function call(path, body) {
+  if (!accessToken ||
+      !tokenExpiresAt ||
+      Date.now() >= tokenExpiresAt - 30000) {
+    clearSession();
+    say('登入已過期，請重新登入');
+    return;
+  }
+
+  try {
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + accessToken
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      say('操作未完成：' +
+        (data.code || 'HTTP ' + response.status));
+      return;
+    }
+
+    if (path.includes('admin-document-view') && data.url) {
+      const target = new URL(data.url);
+
+      if (
+        !config ||
+        target.protocol !== 'https:' ||
+        target.hostname !== new URL(config.url).hostname
+      ) {
+        say('拒絕開啟來源不正確的證件連結');
+        return;
+      }
+
+      say('短效檢視連結已核發');
+      window.open(target.href, '_blank', 'noopener,noreferrer');
+    } else {
+      say(data.code || '操作成功');
+    }
+
+  } catch {
+    say('網路異常，操作結果未確認，請勿立即重複送出');
+  }
+}
+
+$('update').onclick = () => {
+  if (!UUID.test($('requestId').value.trim())) {
+    say('預約編號格式錯誤');
+    return;
+  }
+
+  call('/api/admin-rental-closure', {
+    requestId: $('requestId').value.trim(),
+    action: $('action').value
+  });
+};
+
+$('view').onclick = () => {
+  if (
+    !UUID.test($('requestId').value.trim()) ||
+    !UUID.test($('documentId').value.trim())
+  ) {
+    say('請輸入正確的預約及證件編號');
+    return;
+  }
+
+  call('/api/admin-document-view', {
+    requestId: $('requestId').value.trim(),
+    documentId: $('documentId').value.trim()
+  });
+};
+</script>
+</body>
+</html>
