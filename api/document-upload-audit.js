@@ -8,17 +8,49 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
-  if (process.env.VERCEL_ENV !== 'preview') {
-    return res.status(404).json({
-      ok: false,
-      error: 'Not found'
-    });
+  if (req.method === 'GET') {
+    if (process.env.VERCEL_ENV !== 'preview') {
+      return res.status(404).json({
+        error: 'Not found'
+      });
+    }
+
+    const url = process.env.SUPABASE_URL;
+    const publishableKey =
+      process.env.SUPABASE_PUBLISHABLE_KEY;
+
+    if (!url || !publishableKey) {
+      return res.status(503).json({
+        error: 'Preview configuration missing'
+      });
+    }
+
+    try {
+      const parsed = new URL(url);
+
+      if (
+        parsed.protocol !== 'https:' ||
+        !/^[a-z0-9-]+\.supabase\.co$/.test(parsed.hostname) ||
+        !publishableKey.startsWith('sb_publishable_')
+      ) {
+        throw new Error('Invalid configuration');
+      }
+
+      return res.status(200).json({
+        environment: 'preview',
+        url: parsed.origin,
+        publishableKey
+      });
+    } catch {
+      return res.status(503).json({
+        error: 'Invalid Preview configuration'
+      });
+    }
   }
 
   if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
+    res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({
-      ok: false,
       error: 'Method not allowed'
     });
   }
@@ -35,8 +67,7 @@ export default async function handler(req, res) {
     !NOMST_UPLOAD_ADMIN_SECRET
   ) {
     return res.status(503).json({
-      ok: false,
-      database: 'not_configured'
+      error: '管理服務尚未完成設定'
     });
   }
 
@@ -44,58 +75,53 @@ export default async function handler(req, res) {
 
   if (typeof supplied !== 'string') {
     return res.status(403).json({
-      ok: false,
-      error: 'Unauthorized'
+      error: '未授權'
     });
   }
 
-  const a = hash(supplied);
-  const b = hash(NOMST_UPLOAD_ADMIN_SECRET);
-
-  if (!timingSafeEqual(a, b)) {
+  if (!timingSafeEqual(
+    hash(supplied),
+    hash(NOMST_UPLOAD_ADMIN_SECRET)
+  )) {
     return res.status(403).json({
-      ok: false,
-      error: 'Unauthorized'
+      error: '未授權'
     });
   }
 
   try {
-    const parsed = new URL(SUPABASE_URL);
-
-    if (
-      parsed.protocol !== 'https:' ||
-      !/^[a-z0-9-]+\.supabase\.co$/.test(parsed.hostname)
-    ) {
-      return res.status(503).json({
-        ok: false,
-        database: 'invalid_configuration'
-      });
-    }
+    const base = SUPABASE_URL.replace(/\/$/, '');
 
     const response = await fetch(
-      `${parsed.origin}/rest/v1/rental_bookings?select=id&limit=0`,
+      base +
+      '/rest/v1/document_upload_storage_audit' +
+      '?select=attempt_id,status,storage_check,' +
+      'reconciliation_required,created_at&limit=100',
       {
         headers: {
           apikey: SUPABASE_SECRET_KEY,
-          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
-          Accept: 'application/json'
+          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`
         },
-        signal: AbortSignal.timeout(5000)
+        signal: AbortSignal.timeout(8000)
       }
     );
 
-    return res.status(response.ok ? 200 : 503).json({
-      ok: response.ok,
-      database: response.ok
-        ? 'connected'
-        : 'connection_failed',
-      environment: 'preview'
+    if (!response.ok) {
+      return res.status(502).json({
+        error: '無法查詢上傳異常紀錄'
+      });
+    }
+
+    const records = await response.json();
+
+    return res.status(200).json({
+      ok: true,
+      count: records.length,
+      records
     });
 
   } catch {
     return res.status(503).json({
-      ok: false,
-      database: 'connection_failed'
+      error: '核對服務暫時無法使用'
     });
   }
 }
