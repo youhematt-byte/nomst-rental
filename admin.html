@@ -1,0 +1,27 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>NOM.ST_ 管理後台（待驗收）</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:660px;margin:30px auto;padding:18px;background:#f5f7f6;color:#163027}section{background:white;border-radius:14px;padding:20px;margin:16px 0}input,button,select{font:inherit;padding:10px;max-width:100%;box-sizing:border-box}input{display:block;width:100%;margin:10px 0}button{background:#174c36;color:white;border:0;border-radius:7px;cursor:pointer;margin:6px 4px 6px 0}button:disabled{opacity:.5}label{display:block;margin-top:12px}#output{white-space:pre-wrap;overflow-wrap:anywhere}small{color:#576b61}</style></head><body><h1>NOM.ST_ 管理後台</h1><p>僅供測試環境；需要 Supabase Auth 個別管理員帳號。請勿使用真實證件測試。</p><section><h2>登入</h2><label>Staging Project URL<input id="url" placeholder="https://project-ref.supabase.co" autocomplete="off"></label><label>Staging Publishable／Anon Key<input id="anon" type="password" autocomplete="off"></label><label>電子郵件<input id="email" type="email" autocomplete="username"></label><label>密碼<input id="password" type="password" autocomplete="current-password"></label><button id="login">登入</button><button id="logout">登出</button><small>不儲存密碼或 Token。關閉頁面即結束工作階段。請勿在此填入 Supabase Secret／service_role Key。</small></section><section><h2>結案操作</h2><label>預約 request_id<input id="requestId" placeholder="UUID"></label><label>操作<select id="action"><option value="mark_returned">標記歸還</option><option value="mark_charges_settled">確認費用結清</option><option value="mark_contract_ended">確認合約終止</option><option value="confirm_no_dispute">確認無爭議</option><option value="open_dispute">開啟爭議</option><option value="resolve_dispute">解除爭議</option><option value="close">確認結案</option><option value="hold">保留證件</option><option value="release_hold">解除保留</option></select></label><button id="update">執行操作</button><small>後端必須驗證管理者身分與真實租約，並在資料庫交易中記錄操作。</small></section><section><h2>檢視已綁定證件</h2><label>證件 document_id<input id="documentId" placeholder="UUID"></label><button id="view">取得 60 秒檢視連結</button><p><small>連結具有短期存取權限，請勿複製轉傳。</small></p></section><section><h2>結果</h2><div id="output" role="status" aria-live="polite">尚未登入</div></section><script>
+let accessToken='';
+const $=id=>document.getElementById(id);
+const say=t=>$('output').textContent=t;
+$('login').onclick=async()=>{
+  const url=$('url').value.trim().replace(/\/$/,'');
+  if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url)){say('Staging URL 格式錯誤');return;}
+  if(!$('anon').value||!$('email').value||!$('password').value){say('請填寫登入資訊');return;}
+  try{
+    const r=await fetch(url+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:$('anon').value,'Content-Type':'application/json'},body:JSON.stringify({email:$('email').value,password:$('password').value})});
+    const d=await r.json();
+    $('password').value='';
+    if(!r.ok||!d.access_token){say('登入失敗，請檢查帳號及設定');return;}
+    accessToken=d.access_token;say('已登入；後端仍會檢查管理員名單與權限。');
+  }catch{say('登入連線失敗');}
+};
+$('logout').onclick=()=>{accessToken='';$('password').value='';say('已登出');};
+async function call(path,body){
+  if(!accessToken){say('請先登入');return;}
+  try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},body:JSON.stringify(body)});const d=await r.json();if(!r.ok){say('操作未完成：'+(d.code||'HTTP '+r.status));return;}
+    if(path.includes('admin-document-view')&&d.url){const u=new URL(d.url);if(u.protocol!=='https:'||u.hostname!==new URL($('url').value).hostname){say('拒絕開啟不符合來源的連結');return;}say('已核發短期連結，將在新分頁開啟');window.open(u.href,'_blank','noopener,noreferrer');}
+    else say(d.code||'已收到成功回應');
+  }catch{say('網路錯誤，操作狀態未確認，請勿重複送出');}
+}
+$('update').onclick=()=>call('/api/admin-rental-closure',{requestId:$('requestId').value,action:$('action').value});
+$('view').onclick=()=>call('/api/admin-document-view',{requestId:$('requestId').value,documentId:$('documentId').value});
+</script></body></html>
