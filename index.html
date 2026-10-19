@@ -110,7 +110,7 @@ firstPage.drawImage(firstNameImage,{x:154,y:792-136,width:120,height:15});
 const dateParts=s=>{const [y,m,d]=s.split('-').map(Number);return [String(y-1911),String(m),String(d)];};
 const [sy,sm,sd]=dateParts(start),[ey,em,ed]=dateParts(end);
 const rentalDays=Math.round((new Date(end+'T12:00:00Z')-new Date(start+'T12:00:00Z'))/86400000)+1;
-if(!Number.isInteger(rentalDays)||rentalDays<1||rentalDays>90)throw Error('租借日期不正確');
+if(!Number.isInteger(rentalDays)||rentalDays<1||rentalDays>30)throw Error('租借日期不正確');
 const dateFont=await doc.embedFont(PDFLib.StandardFonts.Helvetica);
 const ink=PDFLib.rgb(.12,.21,.15);
 // Match the printed blanks on page 1 (A4 PDF, 612 x 792 points).
