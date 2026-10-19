@@ -81,10 +81,10 @@ module.exports = async function handler(req, res) {
       {
         method: 'POST',
         headers: {
-apikey: SUPABASE_SECRET_KEY,
-'Content-Type': 'application/json'
-          Prefer: 'return=minimal'
-        },
+  apikey: SUPABASE_SECRET_KEY,
+  'Content-Type': 'application/json',
+  Prefer: 'return=minimal'
+},
         body: JSON.stringify({
           request_id: requestId,
           authorization_hash: hash(authorizationToken),
