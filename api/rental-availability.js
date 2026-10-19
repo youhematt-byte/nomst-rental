@@ -66,10 +66,10 @@ const key = process.env.SUPABASE_SECRET_KEY;
     const upstream = await fetch(
       `${base.replace(/\/$/, '')}/rest/v1/nomst_rental_inventory?${params}`,
       {
-        headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`
-        },
+       
+headers: {
+  apikey: key
+},
         signal: AbortSignal.timeout(8000)
       }
     );
