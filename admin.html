@@ -212,7 +212,10 @@ const loginEmail = $('email').value.trim();
 const loginPassword = $('password').value;
 
 $('login').disabled = true;
-clearSession();
+clearSession(mfaVerified = false;
+mfaFactorId = '';
+$('mfaPanel').classList.add('hidden');
+lockAdminPanel(););
 
 try {
 
@@ -316,8 +319,9 @@ if (!response.ok || !data.access_token) {
     tokenExpiresAt =
       Date.now() + Math.max(0, Number(data.expires_in) || 0) * 1000;
 
-    $('adminPanel').classList.remove('hidden');
-    $('logout').disabled = false;
+$('mfaPanel').classList.remove('hidden');
+lockAdminPanel();
+say('密碼驗證成功，請完成 MFA 雙重驗證');    $('logout').disabled = false;
 
     say('管理員登入成功（Staging）');
 
