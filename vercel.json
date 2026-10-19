@@ -1,0 +1,11 @@
+
+{
+  "functions": {
+    "api/admin-rental-closure.js": {
+      "includeFiles": "lib/**"
+    },
+    "api/admin-document-view.js": {
+      "includeFiles": "lib/**"
+    }
+  }
+}
