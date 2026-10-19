@@ -148,6 +148,8 @@ let mfaFactorId = '';
 
 function lockAdminPanel() {
   mfaVerified = false;
+  $('adminPanel').classList.add('hidden');
+}
 
   const panel = document.getElementById('adminPanel');
   if (panel) {
@@ -167,13 +169,19 @@ const say = message => {
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+
 function clearSession() {
   accessToken = '';
   tokenExpiresAt = 0;
+  mfaVerified = false;
+  mfaFactorId = '';
+
   $('password').value = '';
   $('adminPanel').classList.add('hidden');
+  $('mfaPanel').classList.add('hidden');
   $('logout').disabled = true;
 }
+
 
 async function loadConfig() {
   const response = await fetch(
