@@ -190,9 +190,18 @@ $('login').onclick = async () => {
 
     const data = await response.json();
 
-    if (!response.ok || !data.access_token) {
-      throw new Error('帳號或密碼錯誤');
-    }
+ 
+if (!response.ok || !data.access_token) {
+  const errorCode =
+    data.error_code || data.code || data.error || 'UNKNOWN';
+
+  throw new Error(
+    'Supabase 登入失敗：HTTP ' +
+    response.status +
+    ' / ' + errorCode
+  );
+}
+
 
     const userResponse = await fetch(
       settings.url + '/auth/v1/user',
