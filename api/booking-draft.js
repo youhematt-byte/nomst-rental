@@ -1,10 +1,11 @@
 
-import { randomBytes, randomUUID, createHash } from 'node:crypto';
+
+const { randomBytes, randomUUID, createHash } = require('node:crypto');
 
 const hash = value =>
   createHash('sha256').update(value).digest('hex');
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
   if (req.method !== 'POST') {
