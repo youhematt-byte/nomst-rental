@@ -181,6 +181,20 @@ $('login').onclick = async () => {
           apikey: settings.publishableKey,
           'Content-Type': 'application/json'
         },
+        
+const emailInput = $('email').value;
+const passwordInput = $('password').value;
+
+if (
+  emailInput !== emailInput.trim() ||
+  passwordInput !== passwordInput.trim() ||
+  /[\r\n]/.test(passwordInput)
+) {
+  say('登入資訊包含前後空白或換行，請檢查輸入');
+  $('password').value = '';
+  return;
+}
+
         body: JSON.stringify({
           email: $('email').value.trim(),
           password: $('password').value
