@@ -74,12 +74,15 @@ headers: {
       }
     );
 
-    if (!upstream.ok) {
-      return reply(res, 503, {
-        ok: false,
-        code: 'AVAILABILITY_UNAVAILABLE'
-      });
-    }
+if (!upstream.ok) {
+  console.error('Availability upstream status:', upstream.status);
+
+  return reply(res, 503, {
+    ok: false,
+    code: 'AVAILABILITY_UNAVAILABLE',
+    upstream_status: upstream.status
+  });
+}
 
     const rows = await upstream.json();
 
