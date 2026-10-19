@@ -173,23 +173,26 @@ $('login').onclick = async () => {
 
     const settings = await loadConfig();
 
-    const response = await fetch(
-      settings.url + '/auth/v1/token?grant_type=password',
-      {
-        method: 'POST',
-        headers: {
-          apikey: settings.publishableKey,
-          'Content-Type': 'application/json'
-        },
-        
+ 
+const email = $('email').value.trim();
+const password = $('password').value;
 
+const response = await fetch(
+  settings.url + '/auth/v1/token?grant_type=password',
+  {
+    method: 'POST',
+    headers: {
+      apikey: settings.publishableKey,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      email,
+      password
+    }),
+    cache: 'no-store'
+  }
+);
 
-        body: JSON.stringify({
-          email: $('email').value.trim(),
-          password: $('password').value
-        })
-      }
-    );
 
     const data = await response.json();
 
