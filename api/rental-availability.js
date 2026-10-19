@@ -100,10 +100,15 @@ if (!upstream.ok) {
       start,
       end
     });
-  } catch {
-    return reply(res, 503, {
-      ok: false,
-      code: 'AVAILABILITY_UNAVAILABLE'
-    });
-  }
+} catch (error) {
+  console.error('Availability request failed:', {
+    name: error?.name,
+    message: error?.message
+  });
+
+  return reply(res, 503, {
+    ok: false,
+    code: 'AVAILABILITY_UNAVAILABLE'
+  });
+}
 }
