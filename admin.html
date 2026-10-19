@@ -72,8 +72,17 @@ small{color:#576b61}
 <section id="mfaPanel" class="hidden">
   <h2>管理員雙重驗證</h2>
   <p id="mfaStatus">尚未完成 MFA 驗證</p>
-
+<p id="mfaStatus">尚未完成 MFA 驗證</p>
   <button id="mfaEnroll" type="button">
+    
+<button
+  id="mfaAuthCheck"
+  type="button"
+  disabled
+>
+  驗證後端 MFA 權限
+</button>
+
     綁定 Google Authenticator
   </button>
 
@@ -154,7 +163,7 @@ const $ = id => document.getElementById(id);
 const say = text => { $('output').textContent = text; };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function clearSession() {
+function clearSession($('mfaAuthCheck').disabled = true;) {
   accessToken = '';
   tokenExpiresAt = 0;
   factorId = '';
@@ -328,6 +337,7 @@ $('mfaVerify').onclick = async () => {
     tokenExpiresAt=Date.now()+Number(d.expires_in||0)*1000;
     if (!currentAal2()) throw new Error('MFA 回應未達 aal2，管理操作保持鎖定');
     mfaVerified=true;
+    $('mfaAuthCheck').disabled = false;
     $('mfaCode').value='';
     $('mfaStatus').textContent='MFA 已完成（aal2）';
     $('mfaSetup').classList.add('hidden');
@@ -340,6 +350,55 @@ $('mfaVerify').onclick = async () => {
 // Sensitive actions intentionally disabled until backend AAL2 enforcement is audited.
 $('update').onclick=()=>say('結案操作尚未通過後端 aal2 驗收，維持關閉');
 $('view').onclick=()=>say('證件檢視尚未通過後端 aal2 驗收，維持關閉');
+
+$('mfaAuthCheck').onclick = async () => {
+  const button = $('mfaAuthCheck');
+
+  if (
+    !mfaVerified ||
+    !accessToken ||
+    Date.now() >= tokenExpiresAt - 30000
+  ) {
+    say('請先完成 MFA 驗證或重新登入');
+    return;
+  }
+
+  button.disabled = true;
+
+  try {
+    say('正在驗證後端 MFA 權限...');
+
+    const response = await fetch(
+      '/api/admin-rental-closure',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + accessToken
+        },
+        body: JSON.stringify({
+          action: 'auth_check'
+        }),
+        cache: 'no-store'
+      }
+    );
+
+    const data = await response.json();
+
+    if (response.ok &&
+        data.code === 'ADMIN_AAL2_VERIFIED') {
+      say('後端 MFA AAL2 授權驗證成功');
+    } else {
+      say('後端授權結果：' +
+        (data.code || 'HTTP ' + response.status));
+    }
+
+  } catch {
+    say('後端連線失敗，請稍後再試');
+  } finally {
+    button.disabled = false;
+  }
+};
 
 </script>
 </body>
