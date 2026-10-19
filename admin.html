@@ -69,6 +69,35 @@ small{color:#576b61}
 請勿使用真實客戶證件測試。</small></p>
 </section>
 
+<section id="mfaPanel" class="hidden">
+  <h2>管理員雙重驗證</h2>
+  <p id="mfaStatus">尚未完成 MFA 驗證</p>
+
+  <button id="mfaEnroll" type="button">
+    綁定 Google Authenticator
+  </button>
+
+  <div id="mfaSetup" class="hidden">
+    <p>請使用手機驗證器掃描 QR Code</p>
+    <div id="mfaQr"></div>
+
+    <label>
+      六位數驗證碼
+      <input
+        id="mfaCode"
+        type="text"
+        inputmode="numeric"
+        maxlength="6"
+        autocomplete="one-time-code"
+      >
+    </label>
+
+    <button id="mfaVerify" type="button">
+      確認驗證
+    </button>
+  </div>
+</section>
+
 <div id="adminPanel" class="hidden">
 
 <section>
@@ -113,6 +142,19 @@ small{color:#576b61}
 </section>
 
 <script>
+  
+let mfaVerified = false;
+let mfaFactorId = '';
+
+function lockAdminPanel() {
+  mfaVerified = false;
+
+  const panel = document.getElementById('adminPanel');
+  if (panel) {
+    panel.classList.add('hidden');
+  }
+}
+
 let accessToken = '';
 let tokenExpiresAt = 0;
 let config = null;
