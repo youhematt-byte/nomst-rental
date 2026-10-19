@@ -176,6 +176,17 @@ $('login').onclick = async () => {
  
 const email = $('email').value.trim();
 const password = $('password').value;
+    const hasUnexpectedWhitespace =
+  email !== $('email').value ||
+  /[\r\n]/.test(password);
+
+if (hasUnexpectedWhitespace) {
+  throw new Error('登入資料含有前後空白或換行');
+}
+
+if (!email || !password) {
+  throw new Error('登入資料不可為空');
+}
 
 const response = await fetch(
   settings.url + '/auth/v1/token?grant_type=password',
