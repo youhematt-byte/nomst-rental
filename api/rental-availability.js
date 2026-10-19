@@ -41,8 +41,7 @@ export default async function handler(req, res) {
   }
 
   const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
+const key = process.env.SUPABASE_SECRET_KEY;
   if (
     !base ||
     !/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(base) ||
