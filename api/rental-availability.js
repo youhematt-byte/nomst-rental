@@ -42,6 +42,20 @@ export default async function handler(req, res) {
 
   const base = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SECRET_KEY;
+  
+console.log('Supabase key diagnostic:', {
+  present: typeof key === 'string',
+  startsWithExpectedPrefix:
+    typeof key === 'string' &&
+    key.startsWith('sb_secret_'),
+  containsNonAscii:
+    typeof key === 'string' &&
+    /[^\x00-\x7F]/.test(key),
+  containsWhitespace:
+    typeof key === 'string' &&
+    /\s/.test(key)
+});
+
   if (
     !base ||
     !/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(base) ||
