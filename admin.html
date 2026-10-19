@@ -69,20 +69,16 @@ small{color:#576b61}
 請勿使用真實客戶證件測試。</small></p>
 </section>
 
+
 <section id="mfaPanel" class="hidden">
   <h2>管理員雙重驗證</h2>
   <p id="mfaStatus">尚未完成 MFA 驗證</p>
-<p id="mfaStatus">尚未完成 MFA 驗證</p>
-  <button id="mfaEnroll" type="button">
-    
-<button
-  id="mfaAuthCheck"
-  type="button"
-  disabled
->
-  驗證後端 MFA 權限
-</button>
 
+  <button id="mfaAuthCheck" type="button" disabled>
+    驗證後端 MFA 權限
+  </button>
+
+  <button id="mfaEnroll" type="button">
     綁定 Google Authenticator
   </button>
 
@@ -106,6 +102,7 @@ small{color:#576b61}
     </button>
   </div>
 </section>
+
 
 <div id="adminPanel" class="hidden">
 
@@ -163,7 +160,9 @@ const $ = id => document.getElementById(id);
 const say = text => { $('output').textContent = text; };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function clearSession($('mfaAuthCheck').disabled = true;) {
+
+function clearSession() {
+  $('mfaAuthCheck').disabled = true;
   accessToken = '';
   tokenExpiresAt = 0;
   factorId = '';
