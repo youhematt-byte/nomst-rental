@@ -15,11 +15,7 @@ export default async function handler(req, res) {
   }
 
   // 安全開關：測試完成前不開放
-  if (process.env.NOMST_ENABLE_DOCUMENT_UPLOAD !== 'true') {
-    return res.status(503).json({
-      error: '預約證件上傳尚未開放'
-    });
-  }
+
 
   const { SUPABASE_URL, SUPABASE_SECRET_KEY } = process.env;
 
@@ -84,9 +80,8 @@ export default async function handler(req, res) {
       {
         method: 'POST',
         headers: {
-          apikey: SUPABASE_SECRET_KEY,
-          Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
-          'Content-Type': 'application/json',
+apikey: SUPABASE_SECRET_KEY,
+'Content-Type': 'application/json'
           Prefer: 'return=minimal'
         },
         body: JSON.stringify({
