@@ -165,17 +165,24 @@ $('login').onclick = async () => {
     return;
   }
 
-  $('login').disabled = true;
-  clearSession();
 
-  try {
+const loginEmail = $('email').value.trim();
+const loginPassword = $('password').value;
+
+$('login').disabled = true;
+clearSession();
+
+try {
+
     say('正在驗證管理員...');
 
     const settings = await loadConfig();
 
  
-const email = $('email').value.trim();
-const password = $('password').value;
+
+const email = loginEmail;
+const password = loginPassword;
+
     const hasUnexpectedWhitespace =
   email !== $('email').value ||
   /[\r\n]/.test(password);
