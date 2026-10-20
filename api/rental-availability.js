@@ -1,4 +1,4 @@
-
+import { timingSafeEqual } from 'node:crypto';
 const DEVICE_CODE = 'VIVO-X300-PRO-1TB-001';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -16,6 +16,58 @@ function reply(res, status, body) {
 }
 
 export default async function handler(req, res) {
+  // TEMPORARY: Preview-only database diagnostic
+  if (
+    process.env.VERCEL_ENV === 'preview' &&
+    req.method === 'POST' &&
+    req.headers['x-nomst-diagnostic-mode'] === 'db-check'
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+
+    const secret = process.env.NOMST_PREVIEW_DIAGNOSTIC_SECRET;
+    const supplied = req.headers['x-nomst-diagnostic-secret'];
+    const expected = process.env.NOMST_EXPECTED_STAGING_REF;
+
+    if (
+      !secret ||
+      typeof supplied !== 'string' ||
+      !expected
+    ) {
+      return res.status(403).json({ ok: false });
+    }
+
+    const a = Buffer.from(secret);
+    const b = Buffer.from(supplied);
+
+    if (
+      a.length !== b.length ||
+      !timingSafeEqual(a, b)
+    ) {
+      return res.status(403).json({ ok: false });
+    }
+
+    try {
+      const host = new URL(
+        process.env.SUPABASE_URL
+      ).hostname;
+
+      const actualRef = host.endsWith('.supabase.co')
+        ? host.slice(0, -'.supabase.co'.length)
+        : '';
+
+      return res.status(200).json({
+        ok: true,
+        environment: 'preview',
+        matchesExpectedStaging: actualRef === expected
+      });
+    } catch {
+      return res.status(503).json({
+        ok: false,
+        error: '診斷失敗'
+      });
+    }
+  }
+
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
     return reply(res, 405, {
