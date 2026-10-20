@@ -1,5 +1,5 @@
 
-import { createHash } from 'node:crypto';
+const { createHash } = require('node:crypto');
 
 const MAX_PDF = 4 * 1024 * 1024;
 const clean = (v, n = 200) => String(v ?? '').trim().slice(0, n);
@@ -16,7 +16,7 @@ const emailOK = s =>
 const reply = (res, code, error) =>
   res.status(code).json({ok:false,error});
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
   if (req.method !== 'POST') {
@@ -43,6 +43,8 @@ export default async function handler(req, res) {
   }
 
   const requestId = clean(b.requestId, 40);
+  const authorizationToken = typeof b.authorizationToken === 'string' ? b.authorizationToken.trim() : '';
+  if (!/^[0-9a-f]{64}$/.test(authorizationToken)) return reply(res, 400, '缺少有效預約草稿授權');
   
 const uploadToken =
   typeof b.uploadToken === 'string'
@@ -113,6 +115,9 @@ if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
       (process.env.NOMST_ENABLE_DOCUMENT_UPLOAD !== 'true' ||
        process.env.NOMST_UPLOAD_INTEGRATION_APPROVED !== 'true')) {
     return reply(res, 503, '雙證件安全上傳尚未開放，請改選電話核實或不提供證件');
+  }
+  if (delivery === 'ship' && verify === 'id') {
+    return reply(res, 503, '證件上傳預約流程尚待整合驗收，請改用其他核實方式');
   }
   if (delivery === 'ship' && verify === 'id' && !uploadToken) {
     return reply(res, 400, '請先完成兩份證件安全上傳');
@@ -240,47 +245,54 @@ if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
     Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
     'Content-Type': 'application/json'
   };
-  const dbUpdate = async (patch) => {
-    const r = await fetch(`${baseUrl}/rest/v1/rental_bookings?request_id=eq.${encodeURIComponent(requestId)}`, {
-      method:'PATCH', headers:{...dbHeaders,Prefer:'return=minimal'},
-      body:JSON.stringify({...patch,updated_at:new Date().toISOString()})
-    });
-    if (!r.ok) throw new Error(`資料庫更新失敗 ${r.status}`);
-  };
-  try {
-    const db = await fetch(`${baseUrl}/rest/v1/rental_bookings`, {
-      method:'POST', headers:{...dbHeaders,Prefer:'return=minimal'},
-      body:JSON.stringify({request_id:requestId,request_hash:requestHash,
-        customer_name:name,customer_email:email,rental_start:start,
-        rental_end:end,rental_days:days,rental_total:total})
-    });
-    if (db.status===409) return reply(res,409,'此筆申請已受理或正在處理，請勿重複送出；如需確認請聯絡店家');
-    if (!db.ok) {
-      console.error('Booking database insert failed',db.status);
-      return reply(res,503,'預約紀錄服務暫時無法使用，請稍後再試');
-    }
-  } catch(e) {
-    console.error('Booking database error',e?.message);
-    return reply(res,503,'預約紀錄服務暫時無法連線，請稍後再試');
+  // Only the service-role backend may invoke the atomic reservation RPC.
+  const rpc = await fetch(`${baseUrl}/rest/v1/rpc/nomst_submit_booking`, {
+    method: 'POST', headers: dbHeaders,
+    body: JSON.stringify({
+      p_request_id: requestId,
+      p_authorization_token: authorizationToken,
+      p_device_code: 'VIVO-X300-PRO-1TB-001',
+      p_start_date: start,
+      p_end_date: end
+    })
+  }).catch(error => {
+    console.error('Booking RPC network failure', error?.message);
+    return null;
+  });
+  if (!rpc) return reply(res, 503, '預約結果暫時無法確認，請勿重新提交，請聯絡店家');
+  if (!rpc.ok) {
+    const details = await rpc.json().catch(() => ({}));
+    if (rpc.status === 409 || details.code === '23P01')
+      return reply(res, 409, '租期已有其他預約，請更換日期');
+    console.error('Booking RPC failed', rpc.status, details.code);
+    return reply(res, 503, '預約狀態暫時無法確認，請勿重複提交，請聯絡店家');
+  }
+  const rpcResult = await rpc.json().catch(() => null);
+  if (rpcResult !== 'BOOKING_CREATED') {
+    if (rpcResult === 'ALREADY_SUBMITTED')
+      return reply(res, 409, '這筆預約已提交，請勿重複送出，請聯絡店家確認');
+    if (rpcResult === 'INVALID_DATES' || rpcResult === 'INVALID_DEVICE')
+      return reply(res, 400, '租借日期或設備不正確');
+    if (['INVALID_TOKEN', 'DRAFT_NOT_FOUND', 'DRAFT_EXPIRED'].includes(rpcResult))
+      return reply(res, 403, '預約授權無效或已過期，請重新開始預約');
+    return reply(res, 503, '預約狀態無法確認，請聯絡店家');
   }
 
-  // Fail closed: never accept a booking as fully submitted when the document link fails.
-  if (uploadToken) {
-    try {
-      const linkResponse = await fetch(`${baseUrl}/rest/v1/rpc/link_rental_documents_by_session`, {
-        method:'POST', headers:dbHeaders,
-        body:JSON.stringify({p_request_id:requestId,p_token_hash:createHash('sha256').update(uploadToken).digest('hex')})
-      });
-      if (!linkResponse.ok || await linkResponse.json() !== 2) {
-        await dbUpdate({last_error:'Document linking requires manual review'}).catch(()=>{});
-        return reply(res,409,'證件尚未完成核對，請聯絡店家，勿重新提交');
-      }
-    } catch(error) {
-      console.error('Document linking failed',error?.message);
-      await dbUpdate({last_error:'Document linking requires manual review'}).catch(()=>{});
-      return reply(res,503,'證件綁定未完成，請聯絡店家核對');
-    }
-  }
+  // The database trigger creates two outbox jobs in the SAME transaction.
+  // Mark each job as sending BEFORE calling Resend. Uncertain sends are NOT retried.
+  const dbUpdate = async (recipientType, patch, expectedStatus) => {
+    const filter = `request_id=eq.${encodeURIComponent(requestId)}&recipient_type=eq.${recipientType}` +
+      (expectedStatus ? `&status=eq.${expectedStatus}` : '');
+    const r = await fetch(`${baseUrl}/rest/v1/nomst_booking_email_outbox?${filter}`, {
+      method: 'PATCH',
+      headers: {...dbHeaders, Prefer: 'return=representation'},
+      body: JSON.stringify({...patch, updated_at: new Date().toISOString()})
+    });
+    if (!r.ok) throw new Error(`Outbox update HTTP ${r.status}`);
+    const records = await r.json();
+    if (!Array.isArray(records) || records.length !== 1)
+      throw new Error('Outbox state transition not confirmed');
+  };
 
   try {
     let sent = 0;
@@ -288,7 +300,7 @@ if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
     for (const [index, msg] of messages.entries()) {
       const prefix = index===0 ? 'shop' : 'customer';
       // sending 是不確定狀態：不自動重試，以免重複寄出。
-      await dbUpdate({[`${prefix}_email_status`]:'sending'});
+      await dbUpdate(prefix, {status:'sending', attempts:1}, 'pending');
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
@@ -306,18 +318,18 @@ if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
           await response.text().catch(() => '')
         );
 
-        await dbUpdate({[`${prefix}_email_status`]:'failed',last_error:`Resend HTTP ${response.status}`}).catch(()=>{});
+        await dbUpdate(prefix, {status:'needs_review',last_error:`Resend HTTP ${response.status}`}, 'sending').catch(()=>{});
         return reply(
           res,
           502,
           sent
             ? '店家通知可能已寄出，但客戶副本寄送失敗；請勿重複提交，請聯絡店家確認'
-            : '寄信失敗，請聯絡店家確認'
+            : '預約已記錄，但寄信未確認，請聯絡店家，勿重複提交'
         );
       }
 
       const result = await response.json().catch(()=>({}));
-      await dbUpdate({[`${prefix}_email_status`]:'sent', [`${prefix}_email_id`]:result.id||null});
+      await dbUpdate(prefix, {status:'sent', provider_message_id:result.id||null}, 'sending');
       sent++;
     }
 
@@ -331,7 +343,7 @@ if (uploadToken && !/^[0-9a-f]{64}$/i.test(uploadToken)) {
     return reply(
       res,
       502,
-      '寄信狀態未能確認，請勿重複提交，請聯絡店家'
+      '預約已記錄，但寄信狀態未能確認，請勿重複提交，請聯絡店家'
     );
   }
 }
