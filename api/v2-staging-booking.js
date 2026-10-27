@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 // NOM.ST_ V2 STAGING ONLY. Not a public customer submission endpoint.
-// Requires staging gate + operator bearer secret; never expose either in the browser.
+// Requires staging gate, operator bearer secret AND single-use submission token. Never expose operator secret in browser.
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const hash=s=>createHash('sha256').update(s).digest();
 const day=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(Date.parse(s+'T00:00:00Z'))&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
@@ -18,11 +18,11 @@ export default async function handler(req,res){
   if(!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))
     return res.status(415).json({ok:false,code:'JSON_REQUIRED'});
   const b=req.body;
-  const keys=['requestId','start','end','name','email','phone','ig','purpose','delivery','location','verification','lens','grip','policyVersion'];
+  const keys=['submissionToken','requestId','start','end','name','email','phone','ig','purpose','delivery','location','verification','lens','grip','policyVersion'];
   if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>!keys.includes(k)))
     return res.status(400).json({ok:false,code:'INVALID_REQUEST'});
   const string=(x,n)=>typeof x==='string'&&x.trim().length>0&&x.trim().length<=n;
-  if(!UUID.test(b.requestId||'')||!day(b.start)||!day(b.end)||b.end<b.start||
+  if(typeof b.submissionToken!=='string'||!/^[0-9a-f]{64}$/i.test(b.submissionToken)||!UUID.test(b.requestId||'')||!day(b.start)||!day(b.end)||b.end<b.start||
      (Date.parse(b.end+'T00:00:00Z')-Date.parse(b.start+'T00:00:00Z'))/86400000>=30||
      !string(b.name,80)||!string(b.email,254)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email)||
      !/^09\d{8}$/.test(b.phone||'')||!string(b.ig,80)||!string(b.purpose,160)||
@@ -35,9 +35,10 @@ export default async function handler(req,res){
   if(!SUPABASE_URL||!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(SUPABASE_URL)||!SUPABASE_SECRET_KEY)
     return res.status(503).json({ok:false,code:'CONFIGURATION_ERROR'});
   try{
-    const upstream=await fetch(SUPABASE_URL.replace(/\/$/,'')+'/rest/v1/rpc/nomst_v2_create_booking',{
+    const upstream=await fetch(SUPABASE_URL.replace(/\/$/,'')+'/rest/v1/rpc/nomst_v2_submit_authorized',{
       method:'POST',headers:{apikey:SUPABASE_SECRET_KEY,Authorization:'Bearer '+SUPABASE_SECRET_KEY,'Content-Type':'application/json'},
       body:JSON.stringify({
+        p_token_hash:hash(b.submissionToken.toLowerCase()).toString('hex'),
         p_id:b.requestId,p_device_code:'VIVO-X300-PRO-1TB-001',
         p_start:b.start,p_end:b.end,p_name:b.name,p_email:b.email,p_phone:b.phone,
         p_ig:b.ig,p_purpose:b.purpose,p_fulfillment:b.delivery,p_location:b.location,
@@ -49,7 +50,7 @@ export default async function handler(req,res){
       // PostgreSQL exclusion violation 23P01 can be surfaced as HTTP 400.
       const err=await upstream.json().catch(()=>({}));
       if(err.code==='23P01'||err.code==='23505')return res.status(409).json({ok:false,code:'DATE_UNAVAILABLE_OR_DUPLICATE',requestId:b.requestId});
-      if(err.code==='22023'||err.code==='23514')return res.status(400).json({ok:false,code:'INVALID_BOOKING',requestId:b.requestId});
+      if(err.code==='22023'||err.code==='23514')return res.status(403).json({ok:false,code:'INVALID_OR_EXPIRED_SUBMISSION',requestId:b.requestId});
       console.error('V2 staging booking RPC',upstream.status,err.code);
       return res.status(503).json({ok:false,code:'BOOKING_UNAVAILABLE',requestId:b.requestId});
     }
