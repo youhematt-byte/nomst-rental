@@ -1,0 +1,404 @@
+
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>NOM.ST_ 管理後台</title>
+<style>
+*{box-sizing:border-box}
+body{
+  font-family:system-ui,-apple-system,sans-serif;
+  background:#f5f7f6;
+  color:#163027;
+  max-width:700px;
+  margin:30px auto;
+  padding:18px
+}
+section{
+  background:white;
+  border-radius:14px;
+  padding:22px;
+  margin:16px 0
+}
+h1{margin-bottom:8px}
+input,select{
+  display:block;
+  width:100%;
+  padding:12px;
+  margin:10px 0;
+  border:1px solid #ccd7d0;
+  border-radius:8px;
+  font:inherit
+}
+button{
+  background:#174c36;
+  color:white;
+  border:0;
+  border-radius:8px;
+  padding:12px 18px;
+  cursor:pointer;
+  margin:6px 5px 6px 0;
+  font:inherit
+}
+button:disabled{opacity:.5;cursor:not-allowed}
+label{display:block;margin-top:12px}
+small{color:#576b61}
+#output{white-space:pre-wrap;overflow-wrap:anywhere}
+.hidden{display:none}
+</style>
+</head>
+<body>
+
+<h1>NOM.ST_ 管理後台</h1>
+<p>Staging 測試環境｜僅限授權管理員</p>
+
+<section>
+<h2>管理員登入</h2>
+<label>電子郵件
+<input id="email" type="email" autocomplete="username">
+</label>
+<label>密碼
+<input id="password" type="password"
+ autocomplete="current-password">
+</label>
+<button id="login">登入</button>
+<button id="logout" disabled>登出</button>
+<p><small>透過 Supabase Auth 驗證。
+請勿使用真實客戶證件測試。</small></p>
+</section>
+
+
+<section id="mfaPanel" class="hidden">
+  <h2>管理員雙重驗證</h2>
+  <p id="mfaStatus">尚未完成 MFA 驗證</p>
+
+  <button id="mfaAuthCheck" type="button" disabled>
+    驗證後端 MFA 權限
+  </button>
+
+  <button id="mfaEnroll" type="button">
+    綁定 Google Authenticator
+  </button>
+
+  <div id="mfaSetup" class="hidden">
+    <p>請使用手機驗證器掃描 QR Code</p>
+    <div id="mfaQr"></div>
+
+    <label>
+      六位數驗證碼
+      <input
+        id="mfaCode"
+        type="text"
+        inputmode="numeric"
+        maxlength="6"
+        autocomplete="one-time-code"
+      >
+    </label>
+
+    <button id="mfaVerify" type="button">
+      確認驗證
+    </button>
+  </div>
+</section>
+
+
+<div id="adminPanel" class="hidden">
+
+<section>
+<h2>租借結案管理</h2>
+<label>預約 request_id
+<input id="requestId" placeholder="預約 UUID">
+</label>
+<label>管理操作
+<select id="action">
+<option value="mark_returned">標記手機已歸還</option>
+<option value="mark_charges_settled">確認費用結清</option>
+<option value="mark_contract_ended">確認合約終止</option>
+<option value="confirm_no_dispute">確認無爭議</option>
+<option value="open_dispute">開啟爭議</option>
+<option value="resolve_dispute">解除爭議</option>
+<option value="close">確認結案</option>
+<option value="hold">保留證件</option>
+<option value="release_hold">解除保留</option>
+</select>
+</label>
+<button id="update">執行結案操作</button>
+<p><small>所有操作仍須通過資料庫管理員授權與稽核。</small></p>
+</section>
+
+<section>
+<h2>證件管理</h2>
+<label>證件 document_id
+<input id="documentId" placeholder="證件 UUID">
+</label>
+<button id="view">取得 60 秒檢視連結</button>
+<p><small>僅供已授權管理員查看已綁定證件，
+請勿轉傳短效連結。</small></p>
+</section>
+
+</div>
+
+<section>
+<h2>系統狀態</h2>
+<div id="output" role="status" aria-live="polite">
+尚未登入
+</div>
+</section>
+
+<script>
+
+'use strict';
+let accessToken = '';
+let tokenExpiresAt = 0;
+let config = null;
+let factorId = '';
+let mfaVerified = false;
+let busy = false;
+const $ = id => document.getElementById(id);
+const say = text => { $('output').textContent = text; };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+
+function clearSession() {
+  $('mfaAuthCheck').disabled = true;
+  accessToken = '';
+  tokenExpiresAt = 0;
+  factorId = '';
+  mfaVerified = false;
+  $('password').value = '';
+  $('mfaCode').value = '';
+  $('mfaQr').replaceChildren();
+  $('mfaSetup').classList.add('hidden');
+  $('mfaPanel').classList.add('hidden');
+  $('adminPanel').classList.add('hidden');
+  $('logout').disabled = true;
+}
+function checkSession() {
+  if (!accessToken || Date.now() >= tokenExpiresAt - 30000) {
+    clearSession();
+    throw new Error('登入已過期，請重新登入');
+  }
+}
+async function loadConfig() {
+  const r = await fetch('/api/document-upload-audit', {cache:'no-store'});
+  if (!r.ok) throw new Error('無法取得 Preview 設定（HTTP '+r.status+'）');
+  const d = await r.json();
+  if (d.environment !== 'preview' ||
+      typeof d.url !== 'string' ||
+      !/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(d.url) ||
+      typeof d.publishableKey !== 'string' ||
+      !d.publishableKey.startsWith('sb_publishable_')) {
+    throw new Error('Staging 連線設定不正確');
+  }
+  config = d;
+  return d;
+}
+async function authRequest(path, method='GET', body) {
+  checkSession();
+  const r = await fetch(config.url + '/auth/v1/' + path, {
+    method,
+    headers: {
+      apikey: config.publishableKey,
+      Authorization: 'Bearer ' + accessToken,
+      ...(body === undefined ? {} : {'Content-Type':'application/json'})
+    },
+    ...(body === undefined ? {} : {body: JSON.stringify(body)}),
+    cache:'no-store'
+  });
+  const d = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error('驗證服務 HTTP '+r.status+' / '+(d.code||d.error_code||d.msg||d.message||'UNKNOWN'));
+  return d;
+}
+function currentAal2() {
+  try {
+    const raw = accessToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+    const jwt = JSON.parse(atob(raw.padEnd(Math.ceil(raw.length/4)*4,'=')));
+    return jwt.aal === 'aal2' && jwt.exp * 1000 > Date.now();
+  } catch { return false; }
+}
+function showMfa() {
+  $('mfaPanel').classList.remove('hidden');
+  $('adminPanel').classList.add('hidden');
+  $('logout').disabled = false;
+}
+async function loadFactors() {
+  const user = await authRequest('user');
+  const factors = Array.isArray(user.factors) ? user.factors : [];
+  const verified = factors.find(f=>f.factor_type==='totp' && f.status==='verified');
+  const unverified = factors.find(f=>f.factor_type==='totp' && f.status==='unverified');
+  if (verified) {
+    factorId = verified.id;
+    $('mfaEnroll').disabled = true;
+    $('mfaEnroll').textContent = '已綁定驗證器';
+    $('mfaSetup').classList.remove('hidden');
+    $('mfaQr').textContent = '請開啟已綁定的驗證器，輸入六位數代碼。';
+    say('密碼登入成功，請完成 MFA 驗證');
+  } else if (unverified) {
+    $('mfaEnroll').disabled = true;
+    say('已有尚未驗證的 TOTP 因子，請由管理員安全清理後再重新綁定，勿重複建立。');
+  } else {
+    $('mfaEnroll').disabled = false;
+    say('密碼登入成功，請綁定 MFA 驗證器');
+  }
+}
+$('login').onclick = async () => {
+  if (busy) return;
+  // IMPORTANT: capture password BEFORE clearSession() erases the field.
+  const email = $('email').value.trim();
+  const password = $('password').value;
+  if (!email || !password) { say('請輸入電子郵件和密碼'); return; }
+  busy = true;
+  $('login').disabled = true;
+  clearSession();
+  try {
+    say('正在驗證管理員...');
+    const settings = await loadConfig();
+    const r = await fetch(settings.url+'/auth/v1/token?grant_type=password', {
+      method:'POST',
+      headers:{apikey:settings.publishableKey,'Content-Type':'application/json'},
+      body:JSON.stringify({email,password}),
+      cache:'no-store'
+    });
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok || !d.access_token) {
+      throw new Error('Supabase 登入失敗：HTTP '+r.status+' / '+(d.error_code||d.code||d.error||'UNKNOWN'));
+    }
+    accessToken = d.access_token;
+    tokenExpiresAt = Date.now()+Number(d.expires_in||0)*1000;
+    const user = await authRequest('user');
+    if (!user.id || !user.email_confirmed_at) throw new Error('帳號尚未完成 Email 驗證');
+    const permissionsResponse = await fetch(
+      settings.url+'/rest/v1/nomst_admin_members?select=user_id&user_id=eq.'+
+      encodeURIComponent(user.id)+'&enabled=eq.true',
+      {headers:{apikey:settings.publishableKey,Authorization:'Bearer '+accessToken},cache:'no-store'}
+    );
+    if (!permissionsResponse.ok) throw new Error('無法驗證管理員權限（HTTP '+permissionsResponse.status+'）');
+    const permissions = await permissionsResponse.json();
+    if (!Array.isArray(permissions) || permissions.length!==1) throw new Error('此帳號沒有啟用的管理員權限');
+    showMfa();
+    await loadFactors();
+  } catch (e) {
+    clearSession();
+    say(e.message||'登入失敗');
+  } finally {
+    $('password').value='';
+    $('login').disabled=false;
+    busy=false;
+  }
+};
+$('logout').onclick = async () => {
+  const oldToken=accessToken, oldConfig=config;
+  clearSession();
+  say('已登出');
+  if (oldToken && oldConfig) {
+    try { await fetch(oldConfig.url+'/auth/v1/logout',{
+      method:'POST',
+      headers:{apikey:oldConfig.publishableKey,Authorization:'Bearer '+oldToken}
+    }); } catch {}
+  }
+};
+$('mfaEnroll').onclick = async () => {
+  if (busy) return;
+  busy=true; $('mfaEnroll').disabled=true;
+  try {
+    const d=await authRequest('factors','POST',{factor_type:'totp',friendly_name:'NOM.ST Admin'});
+    factorId=d.id;
+    const qr=d.totp?.qr_code;
+    if (typeof qr!=='string') throw new Error('未取得 QR Code');
+    const img=document.createElement('img');
+    img.alt='僅限本人掃描的 MFA QR Code';
+    img.width=220;
+    if (qr.startsWith('data:image/svg+xml')) img.src=qr;
+    else if (qr.trim().startsWith('<svg') || qr.trim().startsWith('<?xml'))
+      img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(qr);
+    else throw new Error('QR Code 格式不符');
+    $('mfaQr').replaceChildren(img);
+    $('mfaSetup').classList.remove('hidden');
+    say('請用驗證器掃描 QR Code，並輸入六位數代碼。請勿截圖分享。');
+  } catch(e) { say(e.message||'綁定失敗'); }
+  finally { busy=false; /* do not allow duplicate enrollment */ }
+};
+$('mfaVerify').onclick = async () => {
+  if (busy) return;
+  const code=$('mfaCode').value.trim();
+  if (!/^\d{6}$/.test(code)) {say('請輸入六位數驗證碼');return;}
+  if (!factorId) {say('尚未選擇驗證器');return;}
+  busy=true; $('mfaVerify').disabled=true;
+  try {
+    const challenge=await authRequest('factors/'+encodeURIComponent(factorId)+'/challenge','POST',{});
+    const d=await authRequest('factors/'+encodeURIComponent(factorId)+'/verify','POST',{
+      challenge_id:challenge.id,code
+    });
+    if (!d.access_token) throw new Error('MFA 未回傳登入 Token');
+    accessToken=d.access_token;
+    tokenExpiresAt=Date.now()+Number(d.expires_in||0)*1000;
+    if (!currentAal2()) throw new Error('MFA 回應未達 aal2，管理操作保持鎖定');
+    mfaVerified=true;
+    $('mfaAuthCheck').disabled = false;
+    $('mfaCode').value='';
+    $('mfaStatus').textContent='MFA 已完成（aal2）';
+    $('mfaSetup').classList.add('hidden');
+    $('mfaEnroll').disabled=true;
+    say('MFA 已完成（aal2）。管理操作仍鎖定：必須先完成後端 aal2 驗收。');
+    // Do NOT reveal adminPanel until server endpoints also enforce AAL2.
+  } catch(e) { say(e.message||'MFA 驗證失敗'); }
+  finally {busy=false;$('mfaVerify').disabled=false;}
+};
+// Sensitive actions intentionally disabled until backend AAL2 enforcement is audited.
+$('update').onclick=()=>say('結案操作尚未通過後端 aal2 驗收，維持關閉');
+$('view').onclick=()=>say('證件檢視尚未通過後端 aal2 驗收，維持關閉');
+
+$('mfaAuthCheck').onclick = async () => {
+  const button = $('mfaAuthCheck');
+
+  if (
+    !mfaVerified ||
+    !accessToken ||
+    Date.now() >= tokenExpiresAt - 30000
+  ) {
+    say('請先完成 MFA 驗證或重新登入');
+    return;
+  }
+
+  button.disabled = true;
+
+  try {
+    say('正在驗證後端 MFA 權限...');
+
+    const response = await fetch(
+      '/api/admin-rental-closure',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + accessToken
+        },
+        body: JSON.stringify({
+          action: 'auth_check'
+        }),
+        cache: 'no-store'
+      }
+    );
+
+    const data = await response.json();
+
+    if (response.ok &&
+        data.code === 'ADMIN_AAL2_VERIFIED') {
+      say('後端 MFA AAL2 授權驗證成功');
+    } else {
+      say('後端授權結果：' +
+        (data.code || 'HTTP ' + response.status));
+    }
+
+  } catch {
+    say('後端連線失敗，請稍後再試');
+  } finally {
+    button.disabled = false;
+  }
+};
+
+</script>
+</body>
+</html>
