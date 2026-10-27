@@ -12,6 +12,7 @@ export default async function handler(req,res){
   res.setHeader('Cache-Control','no-store');
   res.setHeader('X-Content-Type-Options','nosniff');
   if(req.method!=='GET'){res.setHeader('Allow','GET');return res.status(405).json({ok:false,code:'METHOD_NOT_ALLOWED'});}
+  if(process.env.VERCEL_ENV==='production') return res.status(503).json({ok:false,code:'STAGING_ENDPOINT_DISABLED_IN_PRODUCTION'});
   if(process.env.NOMST_V2_STAGING_WRITES!=='true')
     return res.status(503).json({ok:false,code:'V2_STAGING_NOT_ENABLED'});
   const {start,end}=req.query||{},a=day(start),z=day(end);
