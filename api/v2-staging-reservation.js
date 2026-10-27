@@ -14,6 +14,7 @@ export default async function handler(req,res) {
   res.setHeader('Cache-Control','no-store');
   res.setHeader('X-Content-Type-Options','nosniff');
   if(req.method!=='POST') {res.setHeader('Allow','POST');return res.status(405).json({ok:false,code:'METHOD_NOT_ALLOWED'});}
+  if(process.env.VERCEL_ENV==='production') return res.status(503).json({ok:false,code:'STAGING_ENDPOINT_DISABLED_IN_PRODUCTION'});
   if(process.env.NOMST_V2_STAGING_WRITES!=='true') return res.status(503).json({ok:false,code:'STAGING_WRITES_DISABLED'});
   const secret=process.env.NOMST_V2_OPERATOR_SECRET;
   const supplied=req.headers.authorization;
